@@ -1,0 +1,153 @@
+#----------------------------------------------------# 1. how we select appropriate optimizer--------------------------------------------------------
+import keras_tuner as kt
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, LeakyReLU, PReLU, ELU, Activation
+from tensorflow.keras import optimizers, regularizers
+import tensorflow as tf
+
+def build_model(hp):
+    model = Sequential()
+
+    # -----------------------------
+    # Tune batch_size and epochs HERE
+    # -----------------------------
+    # These need to be defined in build_model to be tracked
+    hp.Int('batch_size', 16, 128, step=16, default=32)
+    hp.Int('epochs', 10, 100, step=10, default=50)
+
+    # -----------------------------
+    # Tune number of hidden layers
+    # -----------------------------
+    num_layers = hp.Int("num_layers", 1, 5, step=1)
+    for i in range(num_layers):
+        units = hp.Int(f"units_{i}", 16, 256, step=16)
+        activation = hp.Choice(
+            f"activation_{i}",
+            [
+                "sigmoid", "tanh", "relu", "leaky_relu", "prelu", "elu",
+                "selu", "swish", "softmax", "gelu", "mish", "hard_swish",
+                "hard_sigmoid", "linear", "binary_step"
+            ]
+        )
+        l2_reg = hp.Float(f"l2_{i}", 0.0, 0.01, step=0.001)
+
+        model.add(Dense(units=units, kernel_regularizer=regularizers.l2(l2_reg) if l2_reg > 0 else None))
+
+        # Apply activation
+        if activation == "leaky_relu":
+            model.add(LeakyReLU())
+        elif activation == "prelu":
+            model.add(PReLU())
+        elif activation == "elu":
+            model.add(ELU())
+        elif activation == "swish":
+            model.add(Activation(tf.nn.swish))
+        elif activation == "gelu":
+            model.add(Activation(tf.nn.gelu))
+        elif activation == "mish":
+            model.add(Activation(lambda x: x * tf.math.tanh(tf.math.softplus(x))))
+        elif activation == "hard_swish":
+            model.add(Activation(tf.nn.hard_swish))
+        elif activation == "binary_step":
+            model.add(Activation(lambda x: tf.where(x >= 0, 1.0, 0.0)))
+        else:
+            model.add(Activation(activation))
+
+        dropout_rate = hp.Float(f"dropout_{i}", 0.0, 0.5, step=0.05)
+        if dropout_rate > 0:
+            model.add(Dropout(rate=dropout_rate))
+
+    # Output layer
+    model.add(Dense(1, activation="sigmoid"))
+
+    # -----------------------------
+    # Tune optimizer
+    # -----------------------------
+    optimizer_name = hp.Choice(
+        "optimizer",
+        ["sgd", "momentum", "nesterov", "adagrad", "adadelta",
+         "rmsprop", "adam", "adamax", "nadam", "adamw"]
+    )
+    lr = hp.Float("learning_rate", 1e-5, 1e-2, sampling="log")
+
+    if optimizer_name == "sgd":
+        optimizer = optimizers.SGD(learning_rate=lr)
+    elif optimizer_name == "momentum":
+        optimizer = optimizers.SGD(learning_rate=lr, momentum=0.9)
+    elif optimizer_name == "nesterov":
+        optimizer = optimizers.SGD(learning_rate=lr, momentum=0.9, nesterov=True)
+    elif optimizer_name == "adagrad":
+        optimizer = optimizers.Adagrad(learning_rate=lr)
+    elif optimizer_name == "adadelta":
+        optimizer = optimizers.Adadelta(learning_rate=lr)
+    elif optimizer_name == "rmsprop":
+        optimizer = optimizers.RMSprop(learning_rate=lr)
+    elif optimizer_name == "adam":
+        optimizer = optimizers.Adam(learning_rate=lr)
+    elif optimizer_name == "adamax":
+        optimizer = optimizers.Adamax(learning_rate=lr)
+    elif optimizer_name == "nadam":
+        optimizer = optimizers.Nadam(learning_rate=lr)
+    elif optimizer_name == "adamw":
+        optimizer = optimizers.AdamW(learning_rate=lr)
+
+    model.compile(optimizer=optimizer, loss="binary_crossentropy", metrics=["accuracy"])
+    return model
+
+# Custom tuner class to use batch_size and epochs from hyperparameters
+class MyTuner(kt.RandomSearch):
+    def run_trial(self, trial, *args, **kwargs):
+        # Extract batch_size and epochs from the trial's hyperparameters
+        kwargs['batch_size'] = trial.hyperparameters.get('batch_size')
+        kwargs['epochs'] = trial.hyperparameters.get('epochs')
+        return super(MyTuner, self).run_trial(trial, *args, **kwargs)
+
+# -----------------------------
+# Initialize tuner
+# -----------------------------
+tuner = MyTuner(
+    build_model,
+    objective="val_accuracy",
+    max_trials=25,
+    directory="my_tuner",
+    project_name="full_model_tuning"
+)
+
+# -----------------------------
+# Run hyperparameter search
+# -----------------------------
+tuner.search(
+    x_train,
+    y_train,
+    validation_data=(x_test, y_test)
+)
+
+# -----------------------------
+# Print best hyperparameters
+# -----------------------------
+best_hp = tuner.get_best_hyperparameters(1)[0]
+
+print("\nBest Hyperparameters:")
+print("---------------------")
+print("Optimizer:", best_hp.get("optimizer"))
+print("Learning Rate:", best_hp.get("learning_rate"))
+print("Number of Layers:", best_hp.get("num_layers"))
+
+for i in range(best_hp.get("num_layers")):
+    print(f"\nLayer {i}:")
+    print("  Units:", best_hp.get(f"units_{i}"))
+    print("  Activation:", best_hp.get(f"activation_{i}"))
+    print("  Dropout:", best_hp.get(f"dropout_{i}"))
+    print("  L2:", best_hp.get(f"l2_{i}"))
+
+print("\nTraining Configuration:")
+# Handle case where batch_size and epochs might not exist in saved tuner
+try:
+    print("Batch Size:", best_hp.get("batch_size"))
+except KeyError:
+    print("Batch Size: Not tuned (using default)")
+
+try:
+    print("Epochs:", best_hp.get("epochs"))
+except KeyError:
+    print("Epochs: Not tuned (using default)")
