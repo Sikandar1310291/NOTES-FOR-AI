@@ -1,0 +1,261 @@
+#    --------------------------------------------------------- Code for finding the best parameter for our RNN Model-------------------------------------------------------------------------------------------
+import keras_tuner as kt
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, Dropout, SimpleRNN, LeakyReLU, PReLU, ELU, Activation, Embedding
+from tensorflow.keras import optimizers, regularizers
+from tensorflow.keras.preprocessing.sequence import pad_sequences  # IMPORT THIS!
+import tensorflow as tf
+
+# ===== PAD YOUR SEQUENCES FIRST! =====
+vocab_size = vocab_size
+TIMESTEPS = max_len  
+
+# # THIS IS CRITICAL - PAD BEFORE EVERYTHING ELSE!
+# x_train = pad_sequences(x_train, maxlen=TIMESTEPS, padding='post', truncating='post')
+# x_test = pad_sequences(x_test, maxlen=TIMESTEPS, padding='post', truncating='post')
+
+# print(f"After padding - x_train shape: {x_train.shape}")
+# print(f"After padding - x_test shape: {x_test.shape}")
+
+
+# ===== HYPERMODEL CLASS WITH EMBEDDING =====
+class RNNHyperModel(kt.HyperModel):
+    def __init__(self, timesteps, vocab_size):  # Changed: removed n_features, added vocab_size
+        self.timesteps = timesteps
+        self.vocab_size = vocab_size
+    
+    def build(self, hp):
+        model = Sequential()
+
+        # Tune batch_size and epochs
+        hp.Int('batch_size', 16, 128, step=16, default=32)
+        hp.Int('epochs', 10, 100, step=10, default=50)
+
+        # ===== EMBEDDING LAYER - CRITICAL FOR TEXT DATA =====
+        embedding_dim = hp.Int('embedding_dim', 50, 256, step=50)
+        model.add(Embedding(
+            input_dim=self.vocab_size + 1,  # +1 for padding token
+            output_dim=embedding_dim,
+            input_length=self.timesteps,
+            mask_zero=True
+        ))
+
+        # Tune number of RNN layers
+        num_layers = hp.Int("num_rnn_layers", 1, 5, step=1)
+        
+        for i in range(num_layers):
+            units = hp.Int(f"rnn_units_{i}", 16, 256, step=16)
+            
+            activation = hp.Choice(
+                f"rnn_activation_{i}",
+                ["tanh", "relu", "sigmoid", "leaky_relu", "prelu", "elu",
+                 "selu", "swish", "gelu", "mish", "hard_swish",
+                 "hard_sigmoid", "linear"]
+            )
+            
+            dropout = hp.Float(f"rnn_dropout_{i}", 0.0, 0.5, step=0.05)
+            recurrent_dropout = hp.Float(f"rnn_recurrent_dropout_{i}", 0.0, 0.3, step=0.05)
+            l2_reg = hp.Float(f"rnn_l2_{i}", 0.0, 0.01, step=0.001)
+            
+            return_sequences = (i < num_layers - 1)
+            
+            # For custom activations, use 'linear' in SimpleRNN
+            if activation in ["leaky_relu", "prelu", "elu", "swish", "gelu", "mish", "hard_swish"]:
+                rnn_activation = "linear"
+            else:
+                rnn_activation = activation
+            
+            # NO input_shape needed - Embedding layer handles it!
+            model.add(SimpleRNN(
+                units=units,
+                activation=rnn_activation,
+                dropout=dropout,
+                recurrent_dropout=recurrent_dropout,
+                return_sequences=return_sequences,
+                kernel_regularizer=regularizers.l2(l2_reg) if l2_reg > 0 else None,
+                recurrent_regularizer=regularizers.l2(l2_reg) if l2_reg > 0 else None
+            ))
+            
+            # Add custom activation layer if needed
+            if activation == "leaky_relu":
+                model.add(LeakyReLU())
+            elif activation == "prelu":
+                model.add(PReLU())
+            elif activation == "elu":
+                model.add(ELU())
+            elif activation == "swish":
+                model.add(Activation(tf.nn.swish))
+            elif activation == "gelu":
+                model.add(Activation(tf.nn.gelu))
+            elif activation == "mish":
+                model.add(Activation(lambda x: x * tf.math.tanh(tf.math.softplus(x))))
+            elif activation == "hard_swish":
+                model.add(Activation(tf.nn.hard_swish))
+
+        # Optional Dense layers after RNN
+        use_dense = hp.Boolean("use_dense_layers")
+        if use_dense:
+            num_dense = hp.Int("num_dense_layers", 1, 3, step=1)
+            for i in range(num_dense):
+                dense_units = hp.Int(f"dense_units_{i}", 16, 256, step=16)
+                dense_activation = hp.Choice(
+                    f"dense_activation_{i}",
+                    ["sigmoid", "tanh", "relu", "leaky_relu", "prelu", "elu",
+                     "selu", "swish", "gelu", "hard_sigmoid", "linear"]
+                )
+                l2_reg_dense = hp.Float(f"dense_l2_{i}", 0.0, 0.01, step=0.001)
+
+                model.add(Dense(
+                    units=dense_units,
+                    kernel_regularizer=regularizers.l2(l2_reg_dense) if l2_reg_dense > 0 else None
+                ))
+
+                # Apply activation
+                if dense_activation == "leaky_relu":
+                    model.add(LeakyReLU())
+                elif dense_activation == "prelu":
+                    model.add(PReLU())
+                elif dense_activation == "elu":
+                    model.add(ELU())
+                elif dense_activation == "swish":
+                    model.add(Activation(tf.nn.swish))
+                elif dense_activation == "gelu":
+                    model.add(Activation(tf.nn.gelu))
+                else:
+                    model.add(Activation(dense_activation))
+
+                dropout_rate = hp.Float(f"dense_dropout_{i}", 0.0, 0.5, step=0.05)
+                if dropout_rate > 0:
+                    model.add(Dropout(rate=dropout_rate))
+
+        # Output layer
+        model.add(Dense(1, activation="sigmoid"))
+
+        # Tune optimizer
+        optimizer_name = hp.Choice(
+            "optimizer",
+            ["sgd", "momentum", "nesterov", "adagrad", "adadelta",
+             "rmsprop", "adam", "adamax", "nadam", "adamw"]
+        )
+        lr = hp.Float("learning_rate", 1e-5, 1e-2, sampling="log")
+
+        if optimizer_name == "sgd":
+            optimizer = optimizers.SGD(learning_rate=lr)
+        elif optimizer_name == "momentum":
+            optimizer = optimizers.SGD(learning_rate=lr, momentum=0.9)
+        elif optimizer_name == "nesterov":
+            optimizer = optimizers.SGD(learning_rate=lr, momentum=0.9, nesterov=True)
+        elif optimizer_name == "adagrad":
+            optimizer = optimizers.Adagrad(learning_rate=lr)
+        elif optimizer_name == "adadelta":
+            optimizer = optimizers.Adadelta(learning_rate=lr)
+        elif optimizer_name == "rmsprop":
+            optimizer = optimizers.RMSprop(learning_rate=lr)
+        elif optimizer_name == "adam":
+            optimizer = optimizers.Adam(learning_rate=lr)
+        elif optimizer_name == "adamax":
+            optimizer = optimizers.Adamax(learning_rate=lr)
+        elif optimizer_name == "nadam":
+            optimizer = optimizers.Nadam(learning_rate=lr)
+        elif optimizer_name == "adamw":
+            optimizer = optimizers.AdamW(learning_rate=lr)
+
+        model.compile(
+            optimizer=optimizer,
+            loss="binary_crossentropy",
+            metrics=["accuracy"]
+        )
+        return model
+
+
+# ===== CUSTOM TUNER CLASS =====
+class MyRNNTuner(kt.RandomSearch):
+    def run_trial(self, trial, *args, **kwargs):
+        kwargs['batch_size'] = trial.hyperparameters.get('batch_size')
+        kwargs['epochs'] = trial.hyperparameters.get('epochs')
+        return super(MyRNNTuner, self).run_trial(trial, *args, **kwargs)
+
+
+# ===== CREATE HYPERMODEL INSTANCE =====
+hypermodel = RNNHyperModel(timesteps=TIMESTEPS, vocab_size=vocab_size)  # Pass vocab_size, NOT N_FEATURES
+
+# ===== INITIALIZE TUNER =====
+tuner = MyRNNTuner(
+    hypermodel=hypermodel,
+    objective="val_accuracy",
+    max_trials=25,
+    directory="rnn_tuner",
+    project_name="full_rnn_tuning",
+    overwrite=True
+)
+
+# ===== RUN HYPERPARAMETER SEARCH =====
+print("Starting RNN hyperparameter search...")
+print(f"Vocabulary size: {vocab_size}")
+print(f"Sequence length (TIMESTEPS): {TIMESTEPS}")
+print(f"x_train shape: {x_train.shape}")  # Should be (samples, 200)
+print(f"Training samples: {len(x_train)}")
+print(f"Test samples: {len(x_test)}")
+print("-" * 60)
+
+tuner.search(
+    x_train,
+    y_train,
+    validation_data=(x_test, y_test),
+    verbose=1
+)
+
+# ===== PRINT BEST HYPERPARAMETERS =====
+best_hp = tuner.get_best_hyperparameters(1)[0]
+
+print("\n" + "="*60)
+print("BEST HYPERPARAMETERS")
+print("="*60)
+
+print("\n📝 Embedding Configuration:")
+print(f"  Embedding Dimension: {best_hp.get('embedding_dim')}")
+
+print("\n📊 Optimizer Configuration:")
+print(f"  Optimizer: {best_hp.get('optimizer')}")
+print(f"  Learning Rate: {best_hp.get('learning_rate'):.6f}")
+
+print("\n🔄 RNN Architecture:")
+print(f"  Number of RNN Layers: {best_hp.get('num_rnn_layers')}")
+
+for i in range(best_hp.get("num_rnn_layers")):
+    print(f"\n  RNN Layer {i+1}:")
+    print(f"    Units: {best_hp.get(f'rnn_units_{i}')}")
+    print(f"    Activation: {best_hp.get(f'rnn_activation_{i}')}")
+    print(f"    Dropout: {best_hp.get(f'rnn_dropout_{i}'):.3f}")
+    print(f"    Recurrent Dropout: {best_hp.get(f'rnn_recurrent_dropout_{i}'):.3f}")
+    print(f"    L2 Regularization: {best_hp.get(f'rnn_l2_{i}'):.4f}")
+
+print("\n🔗 Dense Layers:")
+if best_hp.get("use_dense_layers"):
+    print(f"  Number of Dense Layers: {best_hp.get('num_dense_layers')}")
+    for i in range(best_hp.get("num_dense_layers")):
+        print(f"\n  Dense Layer {i+1}:")
+        print(f"    Units: {best_hp.get(f'dense_units_{i}')}")
+        print(f"    Activation: {best_hp.get(f'dense_activation_{i}')}")
+        print(f"    Dropout: {best_hp.get(f'dense_dropout_{i}'):.3f}")
+        print(f"    L2 Regularization: {best_hp.get(f'dense_l2_{i}'):.4f}")
+else:
+    print("  No additional dense layers used")
+
+print("\n⚙️ Training Configuration:")
+print(f"  Batch Size: {best_hp.get('batch_size')}")
+print(f"  Epochs: {best_hp.get('epochs')}")
+
+# ===== GET AND EVALUATE BEST MODEL =====
+print("\n" + "="*60)
+print("BEST MODEL SUMMARY")
+print("="*60)
+best_model = tuner.get_best_models(num_models=1)[0]
+best_model.summary()
+
+print("\n" + "="*60)
+print("BEST MODEL EVALUATION")
+print("="*60)
+test_loss, test_accuracy = best_model.evaluate(x_test, y_test, verbose=0)
+print(f"Test Loss: {test_loss:.4f}")
+print(f"Test Accuracy: {test_accuracy:.4f}")
