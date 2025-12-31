@@ -30,6 +30,13 @@ sequences = tokenizer.texts_to_sequences(sentences)
 # Vocabulary size
 vocab_size = len(tokenizer.word_index) + 1
 
+# list of tokenized sequences (lists of integers)
+
+import numpy as np
+max_len = max(len(seq) for seq in sequence)
+print("Maximum review length:", max_len)
+
+
 # Padding
 max_len = 5
 X = pad_sequences(sequences, maxlen=max_len)
