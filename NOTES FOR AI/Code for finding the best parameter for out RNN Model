@@ -1,16 +1,20 @@
-#    --------------------------------------------------------- Code for finding the best parameter for our RNN Model-------------------------------------------------------------------------------------------
 import keras_tuner as kt
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Dense, Dropout, SimpleRNN, LeakyReLU, PReLU, ELU, Activation, Embedding
 from tensorflow.keras import optimizers, regularizers
-from tensorflow.keras.preprocessing.sequence import pad_sequences  # IMPORT THIS!
+from tensorflow.keras.preprocessing.sequence import pad_sequences
 import tensorflow as tf
 
-# ===== PAD YOUR SEQUENCES FIRST! =====
-vocab_size = vocab_size
-TIMESTEPS = max_len  
+# ===== DEFINE CUSTOM HARD SWISH FUNCTION =====
+def hard_swish(x):
+    """Hard Swish activation function"""
+    return x * tf.nn.relu6(x + 3) / 6
 
-# # THIS IS CRITICAL - PAD BEFORE EVERYTHING ELSE!
+# ===== PAD YOUR SEQUENCES FIRST! =====
+vocab_size = 3067
+TIMESTEPS = 20  # Truncate from 720
+
+# THIS IS CRITICAL - PAD BEFORE EVERYTHING ELSE!
 # x_train = pad_sequences(x_train, maxlen=TIMESTEPS, padding='post', truncating='post')
 # x_test = pad_sequences(x_test, maxlen=TIMESTEPS, padding='post', truncating='post')
 
@@ -20,7 +24,7 @@ TIMESTEPS = max_len
 
 # ===== HYPERMODEL CLASS WITH EMBEDDING =====
 class RNNHyperModel(kt.HyperModel):
-    def __init__(self, timesteps, vocab_size):  # Changed: removed n_features, added vocab_size
+    def __init__(self, timesteps, vocab_size):
         self.timesteps = timesteps
         self.vocab_size = vocab_size
     
@@ -65,7 +69,6 @@ class RNNHyperModel(kt.HyperModel):
             else:
                 rnn_activation = activation
             
-            # NO input_shape needed - Embedding layer handles it!
             model.add(SimpleRNN(
                 units=units,
                 activation=rnn_activation,
@@ -90,7 +93,7 @@ class RNNHyperModel(kt.HyperModel):
             elif activation == "mish":
                 model.add(Activation(lambda x: x * tf.math.tanh(tf.math.softplus(x))))
             elif activation == "hard_swish":
-                model.add(Activation(tf.nn.hard_swish))
+                model.add(Activation(hard_swish))  # Use custom hard_swish function
 
         # Optional Dense layers after RNN
         use_dense = hp.Boolean("use_dense_layers")
@@ -177,7 +180,7 @@ class MyRNNTuner(kt.RandomSearch):
 
 
 # ===== CREATE HYPERMODEL INSTANCE =====
-hypermodel = RNNHyperModel(timesteps=TIMESTEPS, vocab_size=vocab_size)  # Pass vocab_size, NOT N_FEATURES
+hypermodel = RNNHyperModel(timesteps=TIMESTEPS, vocab_size=vocab_size)
 
 # ===== INITIALIZE TUNER =====
 tuner = MyRNNTuner(
@@ -193,7 +196,7 @@ tuner = MyRNNTuner(
 print("Starting RNN hyperparameter search...")
 print(f"Vocabulary size: {vocab_size}")
 print(f"Sequence length (TIMESTEPS): {TIMESTEPS}")
-print(f"x_train shape: {x_train.shape}")  # Should be (samples, 200)
+print(f"x_train shape: {x_train.shape}")  # Should be (samples, 20)
 print(f"Training samples: {len(x_train)}")
 print(f"Test samples: {len(x_test)}")
 print("-" * 60)
