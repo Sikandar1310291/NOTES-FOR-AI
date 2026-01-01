@@ -282,3 +282,36 @@ print(f"Test Accuracy: {test_accuracy:.4f}")
 # Optional: Save the final model
 best_model.save('best_rnn_model.keras')
 print("\n✅ Best model saved as 'best_rnn_model.keras'")
+
+#-----------------------------------------------------------------------------------------------------
+#-------------------------code for prediction all x_test Data_Set ------------------------------------
+#-----------------------------------------------------------------------------------------------------
+
+from tensorflow.keras.models import load_model
+from tensorflow.keras.activations import hard_swish
+
+# Map custom function
+custom_objects = {'hard_swish': hard_swish}
+
+# Load model
+best_model = load_model('best_rnn_model.h5', compile=False, custom_objects=custom_objects)
+
+#-----------------------------------------------------------------------------------------------------
+#-------------------------code for prediction LINE_BY_LINE Data_Set ----------------------------------
+#-----------------------------------------------------------------------------------------------------
+
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+import numpy as np
+
+line = "go until jurong point crazy available only in bugis n great world la e buffet cine there got amore wat"
+seq = tokenizer.texts_to_sequences([line])
+
+TIMESTEPS = 20
+seq_padded = pad_sequences(seq, maxlen=TIMESTEPS, padding='post', truncating='post')
+
+# Predict
+y_pred_prob = best_model.predict(seq_padded)
+y_pred_class = int(y_pred_prob[0][0] >= 0.5)
+
+print(f"Predicted probability: {y_pred_prob[0][0]:.4f}")
+print(f"Predicted class: {y_pred_class}")
