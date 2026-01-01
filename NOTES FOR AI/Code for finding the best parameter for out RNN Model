@@ -249,12 +249,28 @@ print("\n⚙️ Training Configuration:")
 print(f"  Batch Size: {best_hp.get('batch_size')}")
 print(f"  Epochs: {best_hp.get('epochs')}")
 
-# ===== GET AND EVALUATE BEST MODEL =====
+# ===== BUILD AND EVALUATE BEST MODEL (FIXED) =====
 print("\n" + "="*60)
-print("BEST MODEL SUMMARY")
+print("BUILDING BEST MODEL FROM HYPERPARAMETERS")
 print("="*60)
-best_model = tuner.get_best_models(num_models=1)[0]
+
+# Build model with best hyperparameters instead of loading
+best_model = hypermodel.build(best_hp)
 best_model.summary()
+
+print("\n" + "="*60)
+print("TRAINING BEST MODEL")
+print("="*60)
+
+# Train the best model
+history = best_model.fit(
+    x_train, 
+    y_train,
+    batch_size=best_hp.get('batch_size'),
+    epochs=best_hp.get('epochs'),
+    validation_data=(x_test, y_test),
+    verbose=1
+)
 
 print("\n" + "="*60)
 print("BEST MODEL EVALUATION")
@@ -262,3 +278,7 @@ print("="*60)
 test_loss, test_accuracy = best_model.evaluate(x_test, y_test, verbose=0)
 print(f"Test Loss: {test_loss:.4f}")
 print(f"Test Accuracy: {test_accuracy:.4f}")
+
+# Optional: Save the final model
+best_model.save('best_rnn_model.keras')
+print("\n✅ Best model saved as 'best_rnn_model.keras'")
