@@ -1,0 +1,36 @@
+import tensorflow as tf
+import os
+import random
+
+# Path to your dataset folder
+data_dir = r"C:\Users\ma516\OneDrive\Desktop\Deep Learning Projects\0.  Face mask detection app\data\all"
+
+# Parameters
+IMG_SIZE = (224, 224)
+BATCH_SIZE = 32
+SEED = 123
+
+# Load dataset with random shuffling
+train_ds = tf.keras.utils.image_dataset_from_directory(
+    data_dir,
+    labels='inferred',
+    label_mode='categorical',  # or 'int'
+    image_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    shuffle=True,              # this makes it random
+    seed=SEED,
+    validation_split=0.2,
+    subset='training'
+)
+
+val_ds = tf.keras.utils.image_dataset_from_directory(
+    data_dir,
+    labels='inferred',
+    label_mode='categorical',
+    image_size=IMG_SIZE,
+    batch_size=BATCH_SIZE,
+    shuffle=True,
+    seed=SEED,
+    validation_split=0.2,
+    subset='validation'
+)
